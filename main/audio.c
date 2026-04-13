@@ -27,37 +27,13 @@
 #include <stdio.h>
 #include <string.h>
 #include "audio.h"
-#include "config.h"
 
-#ifdef CONFIG_SNDIO
-extern audio_output audio_sndio;
-#endif
-#ifdef CONFIG_AO
-extern audio_output audio_ao;
-#endif
-#ifdef CONFIG_PULSE
-extern audio_output audio_pulse;
-#endif
-#ifdef CONFIG_ALSA
-extern audio_output audio_alsa;
-#endif
-extern audio_output audio_dummy, audio_pipe;
+extern audio_output audio_i2s;
+extern audio_output audio_dummy;
 
 static audio_output *outputs[] = {
-#ifdef CONFIG_SNDIO
-    &audio_sndio,
-#endif
-#ifdef CONFIG_ALSA
-    &audio_alsa,
-#endif
-#ifdef CONFIG_PULSE
-    &audio_pulse,
-#endif
-#ifdef CONFIG_AO
-    &audio_ao,
-#endif
+    &audio_i2s,
     &audio_dummy,
-    &audio_pipe,
     NULL
 };
 

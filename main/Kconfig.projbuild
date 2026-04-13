@@ -1,0 +1,69 @@
+menu "Shairport I2S DAC Configuration"
+
+    config I2S_BCLK_GPIO
+        int "I2S BCLK (Bit Clock) GPIO number"
+        default 23 if IDF_TARGET_ESP32
+        default 5
+        help
+            GPIO number for the I2S bit clock line.
+
+    config I2S_WS_GPIO
+        int "I2S WS (Word Select / LRCLK) GPIO number"
+        default 21 if IDF_TARGET_ESP32
+        default 4
+        help
+            GPIO number for the I2S word select (LRCLK) line.
+
+    config I2S_DOUT_GPIO
+        int "I2S DOUT (Data Out) GPIO number"
+        default 19 if IDF_TARGET_ESP32
+        default 6
+        help
+            GPIO number for the I2S serial data out line.
+
+    config I2S_MCLK_ENABLED
+        bool "Enable I2S MCLK output"
+        default n
+        help
+            Enable the master clock output. Some DAC modules (e.g. PCM5102A)
+            generate their own clock and do not require MCLK. Leave disabled
+            for those modules.
+
+    config I2S_MCLK_GPIO
+        int "I2S MCLK GPIO number"
+        depends on I2S_MCLK_ENABLED
+        default 0 if IDF_TARGET_ESP32
+        default 7
+        help
+            GPIO number for the I2S master clock output.
+
+    config I2S_MUTE_ENABLED
+        bool "Enable hardware MUTE GPIO"
+        default n
+        help
+            Enable a GPIO pin to control hardware mute on the DAC module.
+            The pin is driven HIGH during playback and LOW when stopped.
+
+    config I2S_MUTE_GPIO
+        int "MUTE GPIO number"
+        depends on I2S_MUTE_ENABLED
+        default 18 if IDF_TARGET_ESP32
+        default 8
+        help
+            GPIO number for the hardware mute control.
+
+    config I2S_DMA_DESC_NUM
+        int "I2S DMA descriptor count"
+        default 8
+        range 2 32
+        help
+            Number of DMA descriptors used by the I2S driver.
+
+    config I2S_DMA_FRAME_NUM
+        int "I2S DMA frame number per descriptor"
+        default 480
+        range 32 1024
+        help
+            Number of frames in each DMA descriptor.
+
+endmenu

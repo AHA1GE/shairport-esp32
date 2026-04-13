@@ -681,7 +681,7 @@ CONFIG_TWAI_ERRATA_FIX_LISTEN_ONLY_DOM=y
 #
 # Legacy I2S Driver Configurations
 #
-CONFIG_I2S_SUPPRESS_DEPRECATE_WARN=y
+# CONFIG_I2S_SUPPRESS_DEPRECATE_WARN is not set
 # end of Legacy I2S Driver Configurations
 
 #
