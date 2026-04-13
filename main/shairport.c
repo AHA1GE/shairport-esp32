@@ -41,7 +41,7 @@ void shairport_shutdown(int retval) {
         config.output->deinit();
 }
 
-extern audio_output audio_dummy;
+extern audio_output audio_i2s;
 
 void start_shairport(void* args) {
     printf("Starting Shairport %s\n", version);
@@ -61,7 +61,7 @@ void start_shairport(void* args) {
     esp_rom_md5_final(ap_md5, &ctx);
     memcpy(config.hw_addr, ap_md5, sizeof(config.hw_addr));
 
-    config.output = &audio_dummy;
+    config.output = &audio_i2s;
     config.output->init(0, NULL);
 
     rtsp_listen_loop();

@@ -25,72 +25,13 @@
  */
 
 #include <stdio.h>
-#include <unistd.h>
-#include <sys/time.h>
 #include "audio.h"
-#include "driver/i2s.h"
-#include "driver/gpio.h"
-#include "soc/gpio_num.h"
 
-#define I2S_NUM     (0)
-
-//#define WROVER_KIT
-
-#ifdef WROVER_KIT
-#define I2S_WS      (GPIO_NUM_27)
-#define I2S_BCK     (GPIO_NUM_26)
-#define I2S_MCK     (I2S_PIN_NO_CHANGE)
-#define I2S_DO      (GPIO_NUM_25)
-#elifdef CONFIG_IDF_TARGET_ESP32
-#define I2S_WS      (GPIO_NUM_21)
-#define I2S_BCK     (GPIO_NUM_23)
-#define I2S_MCK     (GPIO_NUM_0)
-#define I2S_DO      (GPIO_NUM_19)
-#define MUTE        (GPIO_NUM_18)
-#elifdef CONFIG_IDF_TARGET_ESP32S3
-#define I2S_WS      (I2S_PIN_NO_CHANGE)
-#define I2S_BCK     (I2S_PIN_NO_CHANGE)
-#define I2S_MCK     (I2S_PIN_NO_CHANGE)
-#define I2S_DO      (I2S_PIN_NO_CHANGE)
-#define MUTE        (I2S_PIN_NO_CHANGE)
-#endif
-
-#define TASK_STACK  (2048)
-#define BUF_CNT    (8)
-#define BUF_LEN     (355)
-
-int Fs;
-long long starttime, samples_played;
+static int Fs;
+static long long samples_played;
 
 static int init(int argc, char **argv) {
-    i2s_config_t i2s_config = {
-            .mode = I2S_MODE_MASTER | I2S_MODE_TX,
-            .sample_rate = 44100,
-            .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-            .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-            .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-            .dma_buf_count = BUF_CNT,
-            .dma_buf_len = BUF_LEN,
-            .use_apll = true,
-            .intr_alloc_flags = ESP_INTR_FLAG_LEVEL2
-    };
-
-    i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
-
-    i2s_pin_config_t pin_config = {
-            .mck_io_num = I2S_MCK,
-            .bck_io_num = I2S_BCK,
-            .ws_io_num = I2S_WS,
-            .data_out_num = I2S_DO,
-            .data_in_num = I2S_PIN_NO_CHANGE
-    };
-    i2s_set_pin(I2S_NUM, &pin_config);
-
-#ifndef WROVER_KIT
-    gpio_set_direction(MUTE, GPIO_MODE_OUTPUT);
-    gpio_set_level(MUTE, 0);
-#endif
-
+    printf("dummy audio output initialised\n");
     return 0;
 }
 
@@ -98,28 +39,16 @@ static void deinit(void) {
 }
 
 static void start(int sample_rate) {
-#ifndef WROVER_KIT
-    gpio_set_level(MUTE, 1);
-#endif
     Fs = sample_rate;
-    starttime = 0;
     samples_played = 0;
-
-    printf("dummy audio output started at Fs=%d Hz\n", sample_rate);
+    printf("dummy audio output started at Fs=%d Hz\n", Fs);
 }
 
 static void play(short buf[], int samples) {
-//    printf("frame size: %d\n", samples);
-    //size_t bytes_written;
-    //i2s_write(I2S_NUM, buf, 4*samples, &bytes_written, 10);
     samples_played += samples;
-    //vTaskDelay(8/portTICK_RATE_MS);
 }
 
 static void stop(void) {
-#ifndef WROVER_KIT
-    gpio_set_level(MUTE, 0);
-#endif
     printf("dummy audio stopped\n");
 }
 
