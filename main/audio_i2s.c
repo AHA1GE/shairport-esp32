@@ -84,7 +84,7 @@ static int i2s_init(int argc, char **argv)
     mute_set(1);   /* start muted */
 #endif
 
-    ESP_LOGI(TAG, "I2S output initialised  BCLK=%d  WS=%d  DOUT=%d"
+    ESP_LOGI(TAG, "I2S output initialized  BCLK=%d  WS=%d  DOUT=%d"
 #if CONFIG_I2S_MCLK_ENABLED
              "  MCLK=%d"
 #endif

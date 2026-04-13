@@ -25,7 +25,7 @@ menu "Shairport I2S DAC Configuration"
         bool "Enable I2S MCLK output"
         default n
         help
-            Enable the master clock output. Some DAC modules (e.g. PCM5102)
+            Enable the master clock output. Some DAC modules (e.g. PCM5102A)
             generate their own clock and do not require MCLK. Leave disabled
             for those modules.
 
