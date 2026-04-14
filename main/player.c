@@ -494,7 +494,11 @@ static void player_thread_func(void *arg) {
             play_samples = srcdat.output_frames_gen;
         } else
 #endif
-        play_samples = stuff_buffer(bf_playback_rate, inbuf, outbuf);
+        {
+            memset(outbuf, 0, OUTFRAME_BYTES(frame_size));
+            memcpy(outbuf, inbuf, FRAME_BYTES(frame_size));
+            play_samples = stuff_buffer(bf_playback_rate, inbuf, outbuf);
+        }
         config.output->play(outbuf, play_samples);
     }
     player_thread = NULL;
