@@ -3,6 +3,7 @@ menu "Shairport I2S DAC Configuration"
     config I2S_BCLK_GPIO
         int "I2S BCLK (Bit Clock) GPIO number"
         default 23 if IDF_TARGET_ESP32
+        default 11 if IDF_TARGET_ESP32S3
         default 5
         help
             GPIO number for the I2S bit clock line.
@@ -10,6 +11,7 @@ menu "Shairport I2S DAC Configuration"
     config I2S_WS_GPIO
         int "I2S WS (Word Select / LRCLK) GPIO number"
         default 21 if IDF_TARGET_ESP32
+        default 13 if IDF_TARGET_ESP32S3
         default 4
         help
             GPIO number for the I2S word select (LRCLK) line.
@@ -17,6 +19,7 @@ menu "Shairport I2S DAC Configuration"
     config I2S_DOUT_GPIO
         int "I2S DOUT (Data Out) GPIO number"
         default 19 if IDF_TARGET_ESP32
+        default 12 if IDF_TARGET_ESP32S3
         default 6
         help
             GPIO number for the I2S serial data out line.
@@ -33,6 +36,7 @@ menu "Shairport I2S DAC Configuration"
         int "I2S MCLK GPIO number"
         depends on I2S_MCLK_ENABLED
         default 0 if IDF_TARGET_ESP32
+        default 10 if IDF_TARGET_ESP32S3
         default 7
         help
             GPIO number for the I2S master clock output.
@@ -48,6 +52,7 @@ menu "Shairport I2S DAC Configuration"
         int "MUTE GPIO number"
         depends on I2S_MUTE_ENABLED
         default 18 if IDF_TARGET_ESP32
+        default 9 if IDF_TARGET_ESP32S3
         default 8
         help
             GPIO number for the hardware mute control.

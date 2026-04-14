@@ -114,7 +114,8 @@ static void alac_decode(short *dest, uint8_t *buf, int len) {
     unsigned char iv[16];
     int aeslen = len & ~0xf;
     memcpy(iv, aesiv, sizeof(iv));
-    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, len, iv, buf, packet);
+    if (aeslen > 0)
+        mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, aeslen, iv, buf, packet);
     memcpy(packet+aeslen, buf+aeslen, len-aeslen);
 
     int outsize;
@@ -225,8 +226,7 @@ void player_put_packet(seq_t seqno, uint8_t *data, int len) {
     }
 
     if (abuf) {
-        //alac_decode(abuf->data, data, len);
-        memcpy(abuf->data, data, len);
+        alac_decode(abuf->data, data, len);
         abuf->ready = 1;
     }
     
@@ -494,8 +494,11 @@ static void player_thread_func(void *arg) {
             play_samples = srcdat.output_frames_gen;
         } else
 #endif
-        //play_samples = stuff_buffer(bf_playback_rate, inbuf, outbuf);
-        play_samples = frame_size;
+        {
+            memset(outbuf, 0, OUTFRAME_BYTES(frame_size));
+            memcpy(outbuf, inbuf, FRAME_BYTES(frame_size));
+            play_samples = stuff_buffer(bf_playback_rate, inbuf, outbuf);
+        }
         config.output->play(outbuf, play_samples);
     }
     player_thread = NULL;
