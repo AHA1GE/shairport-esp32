@@ -164,7 +164,7 @@ int rtp_setup(SOCKADDR *remote, int cport, int tport) {
 
     ESP_LOGD(TAG, "rtp listening on port %d\n", sport);
 
-    BaseType_t ret = xTaskCreate(rtp_receiver, "RTP Receiver", 2048, NULL, 3, &rtp_thread);
+    BaseType_t ret = xTaskCreate(rtp_receiver, "RTP Receiver", 4096, NULL, 3, &rtp_thread);
     assert(ret == pdPASS);
 
     return sport;

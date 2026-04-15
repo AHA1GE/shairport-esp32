@@ -32,7 +32,17 @@
 #include "common.h"
 
 #include <esp_log.h>
+#include <psa/crypto.h>
+#include <mbedtls/build_info.h>
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include <mbedtls/private/ctr_drbg.h>
+#include <mbedtls/private/rsa.h>
+#include <mbedtls/private/entropy.h>
+#else
 #include <mbedtls/ctr_drbg.h>
+#include <mbedtls/rsa.h>
+#include <mbedtls/entropy.h>
+#endif
 
 shairport_cfg config;
 
@@ -93,40 +103,82 @@ static const char super_secret_key[] =
 
 uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
   mbedtls_pk_context pkctx;
+#if MBEDTLS_VERSION_MAJOR < 4
   mbedtls_rsa_context *trsa;
   const char *pers = "rsa_encrypt";
   size_t olen = *outlen;
+#endif
   int rc;
 
-  mbedtls_entropy_context entropy;
-  mbedtls_ctr_drbg_context ctr_drbg;
-
-  mbedtls_entropy_init(&entropy);
-
-  mbedtls_ctr_drbg_init(&ctr_drbg);
-  mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers,
-                        strlen(pers));
 
   mbedtls_pk_init(&pkctx);
-
+#if MBEDTLS_VERSION_MAJOR < 4
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context ctr_drbg;
+  mbedtls_entropy_init(&entropy);
+  mbedtls_ctr_drbg_init(&ctr_drbg);
+  mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers));
 #if MBEDTLS_VERSION_MAJOR == 3
   rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key),
                             NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
 #else
-  rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key),
-                            NULL, 0);
-
+  rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key), NULL, 0);
 #endif
+#else
+  rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key), NULL, 0);
+#endif
+
   if (rc != 0)
     ESP_LOGE("rsa_apply", "Error %d reading the private key.", rc);
 
   uint8_t *outbuf = NULL;
+#if MBEDTLS_VERSION_MAJOR >= 4
+  psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+  mbedtls_svc_key_id_t key_id = MBEDTLS_SVC_KEY_ID_INIT;
+  psa_status_t status = PSA_SUCCESS;
+  size_t olen_psa = 0;
+
+  // Determine PSA attributes based on operation mode
+  if (mode == RSA_MODE_AUTH) {
+      mbedtls_pk_get_psa_attributes(&pkctx, PSA_KEY_USAGE_ENCRYPT, &attr);
+      psa_set_key_algorithm(&attr, PSA_ALG_RSA_PKCS1V15_CRYPT);
+      psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
+  } else {
+      mbedtls_pk_get_psa_attributes(&pkctx, PSA_KEY_USAGE_DECRYPT, &attr);
+      psa_set_key_algorithm(&attr, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_1));
+      psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_DECRYPT);
+  }
+
+  // Import the parsed PK key into PSA key store
+  rc = mbedtls_pk_import_into_psa(&pkctx, &attr, &key_id);
+  if (rc != 0)
+      ESP_LOGE("rsa_apply", "PSA key import error %d", rc);
+
+  size_t outbuf_sz = psa_get_key_bits(&attr) / 8;
+  outbuf = malloc(outbuf_sz);
+
+    switch (mode) {
+        case RSA_MODE_AUTH:
+            status = psa_asymmetric_encrypt(key_id, PSA_ALG_RSA_PKCS1V15_CRYPT, input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
+            if (status != PSA_SUCCESS) ESP_LOGE("rsa_apply", "psa_asymmetric_encrypt error %d.", (int)status);
+            *outlen = (int)outbuf_sz;
+            break;
+        case RSA_MODE_KEY:
+            status = psa_asymmetric_decrypt(key_id, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_1), input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
+            if (status != PSA_SUCCESS) ESP_LOGE("rsa_apply", "psa_asymmetric_decrypt error %d.", (int)status);
+            *outlen = olen_psa;
+            break;
+        default:
+            ESP_LOGE("rsa_apply", "bad rsa mode");
+    }
+  psa_destroy_key(key_id);
+  psa_reset_key_attributes(&attr);
+#else
   trsa = mbedtls_pk_rsa(pkctx);
 
     switch (mode) {
         case RSA_MODE_AUTH:
             mbedtls_rsa_set_padding(trsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_NONE);
-//            outbuf = malloc(trsa->MBEDTLS_PRIVATE_V3_ONLY(len));
             outbuf = malloc(mbedtls_rsa_get_len(trsa));
 #if MBEDTLS_VERSION_MAJOR == 3
             rc = mbedtls_rsa_pkcs1_encrypt(trsa, mbedtls_ctr_drbg_random, &ctr_drbg,
@@ -137,12 +189,10 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
 #endif
             if (rc != 0)
                 ESP_LOGE("rsa_apply", "mbedtls_pk_encrypt error %d.", rc);
-//            *outlen = trsa->MBEDTLS_PRIVATE(len);
             *outlen = (int)mbedtls_rsa_get_len(trsa);
             break;
         case RSA_MODE_KEY:
             mbedtls_rsa_set_padding(trsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA1);
-//            outbuf = malloc(trsa->MBEDTLS_PRIVATE_V3_ONLY(len));
             outbuf = malloc(mbedtls_rsa_get_len(trsa));
 #if MBEDTLS_VERSION_MAJOR == 3
             rc = mbedtls_rsa_pkcs1_decrypt(trsa, mbedtls_ctr_drbg_random, &ctr_drbg,
@@ -158,9 +208,13 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
         default:
             ESP_LOGE("rsa_apply", "bad rsa mode");
     }
+#endif
 
+#if MBEDTLS_VERSION_MAJOR < 4
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
+#endif
     mbedtls_pk_free(&pkctx);
     return outbuf;
 }
+

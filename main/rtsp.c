@@ -56,7 +56,8 @@ static const char* TAG = "RTSP";
 #endif
 
 static int please_shutdown = 0;
-TaskHandle_t* listen_thread;
+static TaskHandle_t listen_thread_handle = NULL;
+TaskHandle_t* listen_thread = &listen_thread_handle;
 
 typedef struct {
     int fd;

@@ -43,4 +43,5 @@ void app_main(void) {
     return;
 }
 
+#undef traceBLOCKING_ON_QUEUE_RECEIVE
 #define traceBLOCKING_ON_QUEUE_RECEIVE(pxQueue) ESP_LOGI("TRACE", "Entering mutex %s", #pxQueue)

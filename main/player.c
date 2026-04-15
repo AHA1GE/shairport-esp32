@@ -31,7 +31,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
-#include "mbedtls/aes.h"
+#include <mbedtls/build_info.h>
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include <mbedtls/private/aes.h>
+#else
+#include <mbedtls/aes.h>
+#endif
 #include <math.h>
 #include <assert.h>
 
@@ -75,7 +80,7 @@ static SemaphoreHandle_t vol_mutex;
 
 // default buffer size
 // needs to be a power of 2 because of the way BUFIDX(seqno) works
-#define BUFFER_FRAMES  512
+#define BUFFER_FRAMES  256
 #define MAX_PACKET      2048
 
 typedef struct audio_buffer_entry {   // decoded audio packets
@@ -400,7 +405,8 @@ static short *buffer_get_frame(void) {
         curframe->ready = 0;
         xSemaphoreGive(ab_mutex); // Player Thread
     }else {
-        printf("Skip\n");
+        ESP_LOGW(TAG, "Skipped frame, mutex timeout");
+        return 0;
     }
     return curframe->data;
 }

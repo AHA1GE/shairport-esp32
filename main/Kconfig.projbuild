@@ -43,7 +43,8 @@ menu "Shairport I2S DAC Configuration"
 
     config I2S_MUTE_ENABLED
         bool "Enable hardware MUTE GPIO"
-        default n
+        default y if IDF_TARGET_ESP32S3
+        default n 
         help
             Enable a GPIO pin to control hardware mute on the DAC module.
             The pin is driven HIGH during playback and LOW when stopped.
