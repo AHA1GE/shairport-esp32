@@ -485,7 +485,7 @@ static void handle_announce(rtsp_conn_info *conn,
     uint8_t *aeskey = rsa_apply(rsaaeskey, len, &keylen, RSA_MODE_KEY);
     free(rsaaeskey);
     if (keylen != 16) {
-        ESP_LOGW(TAG, "client announced rsaaeskey of %d bytes, wanted 16", keylen);
+        ESP_LOGW(TAG, "RSA decryption of AES key failed (output %d bytes, wanted 16)", keylen);
         free(aeskey);
         return;
     }
@@ -840,7 +840,7 @@ void rtsp_listen_loop(void) {
             perror("failed to accept connection");
             free(conn);
         } else {
-            xTaskCreate(rtsp_conversation_thread_func, "RTSP Conversation", 4096, (void*)conn, 2, &(conn->thread));
+            xTaskCreate(rtsp_conversation_thread_func, "RTSP Conversation", 8192, (void*)conn, 2, &(conn->thread));
             listen_thread = &(conn->thread);
             conn->running = 1;
             track_thread(conn);

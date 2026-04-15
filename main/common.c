@@ -112,6 +112,13 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
 
 
   mbedtls_pk_init(&pkctx);
+#if MBEDTLS_VERSION_MAJOR >= 4
+  {
+    psa_status_t init_status = psa_crypto_init();
+    if (init_status != PSA_SUCCESS && init_status != PSA_ERROR_ALREADY_EXISTS)
+      ESP_LOGE("rsa_apply", "psa_crypto_init error %d", (int)init_status);
+  }
+#endif
 #if MBEDTLS_VERSION_MAJOR < 4
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context ctr_drbg;
@@ -160,16 +167,25 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
     switch (mode) {
         case RSA_MODE_AUTH:
             status = psa_asymmetric_encrypt(key_id, PSA_ALG_RSA_PKCS1V15_CRYPT, input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
-            if (status != PSA_SUCCESS) ESP_LOGE("rsa_apply", "psa_asymmetric_encrypt error %d.", (int)status);
-            *outlen = (int)outbuf_sz;
+            if (status != PSA_SUCCESS) {
+                ESP_LOGE("rsa_apply", "psa_asymmetric_encrypt error %d.", (int)status);
+                free(outbuf); outbuf = NULL; *outlen = 0;
+            } else {
+                *outlen = (int)outbuf_sz;
+            }
             break;
         case RSA_MODE_KEY:
             status = psa_asymmetric_decrypt(key_id, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_1), input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
-            if (status != PSA_SUCCESS) ESP_LOGE("rsa_apply", "psa_asymmetric_decrypt error %d.", (int)status);
-            *outlen = olen_psa;
+            if (status != PSA_SUCCESS) {
+                ESP_LOGE("rsa_apply", "psa_asymmetric_decrypt error %d.", (int)status);
+                free(outbuf); outbuf = NULL; *outlen = 0;
+            } else {
+                *outlen = (int)olen_psa;
+            }
             break;
         default:
             ESP_LOGE("rsa_apply", "bad rsa mode");
+            free(outbuf); outbuf = NULL; *outlen = 0;
     }
   psa_destroy_key(key_id);
   psa_reset_key_attributes(&attr);

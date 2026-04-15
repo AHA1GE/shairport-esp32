@@ -58,7 +58,7 @@ void mdns_register(void) {
             {"pw", "false"}
     };
 
-    ESP_ERROR_CHECK( mdns_service_add(mdns_apname, "_raop", "_tcp", config.port, txt, 12) );
+    ESP_ERROR_CHECK( mdns_service_add(mdns_apname, "_raop", "_tcp", config.port, txt, sizeof(txt)/sizeof(txt[0])) );
 }
 
 void mdns_unregister(void) {
