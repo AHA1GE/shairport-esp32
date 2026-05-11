@@ -135,47 +135,74 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
   rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key), NULL, 0);
 #endif
 
-  if (rc != 0)
+    if (rc != 0) {
     ESP_LOGE("rsa_apply", "Error %d reading the private key.", rc);
+    *outlen = 0;
+  #if MBEDTLS_VERSION_MAJOR < 4
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+  #endif
+    mbedtls_pk_free(&pkctx);
+    return NULL;
+    }
 
   uint8_t *outbuf = NULL;
 #if MBEDTLS_VERSION_MAJOR >= 4
   psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
   mbedtls_svc_key_id_t key_id = MBEDTLS_SVC_KEY_ID_INIT;
   psa_status_t status = PSA_SUCCESS;
+    psa_key_usage_t usage = 0;
+    psa_algorithm_t alg = 0;
   size_t olen_psa = 0;
+    int key_imported = 0;
 
-  // Determine PSA attributes based on operation mode
-  if (mode == RSA_MODE_AUTH) {
-      mbedtls_pk_get_psa_attributes(&pkctx, PSA_KEY_USAGE_ENCRYPT, &attr);
-      psa_set_key_algorithm(&attr, PSA_ALG_RSA_PKCS1V15_CRYPT);
-      psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
-  } else {
-      mbedtls_pk_get_psa_attributes(&pkctx, PSA_KEY_USAGE_DECRYPT, &attr);
-      psa_set_key_algorithm(&attr, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_1));
-      psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_DECRYPT);
+    switch (mode) {
+      case RSA_MODE_AUTH:
+        usage = PSA_KEY_USAGE_SIGN_HASH;
+        alg = PSA_ALG_RSA_PKCS1V15_SIGN_RAW;
+        break;
+      case RSA_MODE_KEY:
+        usage = PSA_KEY_USAGE_DECRYPT;
+        alg = PSA_ALG_RSA_OAEP(PSA_ALG_SHA_1);
+        break;
+      default:
+        ESP_LOGE("rsa_apply", "bad rsa mode");
+        *outlen = 0;
+        goto psa_cleanup;
   }
 
-  // Import the parsed PK key into PSA key store
+    mbedtls_pk_get_psa_attributes(&pkctx, usage, &attr);
+    psa_set_key_algorithm(&attr, alg);
+    psa_set_key_usage_flags(&attr, usage);
+
   rc = mbedtls_pk_import_into_psa(&pkctx, &attr, &key_id);
-  if (rc != 0)
+    if (rc != 0) {
       ESP_LOGE("rsa_apply", "PSA key import error %d", rc);
+      *outlen = 0;
+      goto psa_cleanup;
+    }
+    key_imported = 1;
 
   size_t outbuf_sz = psa_get_key_bits(&attr) / 8;
   outbuf = malloc(outbuf_sz);
+    if (outbuf == NULL) {
+      ESP_LOGE("rsa_apply", "out of memory allocating %u bytes", (unsigned)outbuf_sz);
+      *outlen = 0;
+      goto psa_cleanup;
+    }
 
     switch (mode) {
         case RSA_MODE_AUTH:
-            status = psa_asymmetric_encrypt(key_id, PSA_ALG_RSA_PKCS1V15_CRYPT, input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
+        status = psa_sign_hash(key_id, alg, input, inlen, outbuf, outbuf_sz, &olen_psa);
             if (status != PSA_SUCCESS) {
-                ESP_LOGE("rsa_apply", "psa_asymmetric_encrypt error %d.", (int)status);
+          ESP_LOGE("rsa_apply", "psa_sign_hash error %d.", (int)status);
                 free(outbuf); outbuf = NULL; *outlen = 0;
             } else {
-                *outlen = (int)outbuf_sz;
+          *outlen = (int)olen_psa;
             }
             break;
         case RSA_MODE_KEY:
-            status = psa_asymmetric_decrypt(key_id, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_1), input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
+        status = psa_asymmetric_decrypt(key_id, alg, input, inlen, NULL, 0, outbuf, outbuf_sz, &olen_psa);
             if (status != PSA_SUCCESS) {
                 ESP_LOGE("rsa_apply", "psa_asymmetric_decrypt error %d.", (int)status);
                 free(outbuf); outbuf = NULL; *outlen = 0;
@@ -183,11 +210,11 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
                 *outlen = (int)olen_psa;
             }
             break;
-        default:
-            ESP_LOGE("rsa_apply", "bad rsa mode");
-            free(outbuf); outbuf = NULL; *outlen = 0;
     }
-  psa_destroy_key(key_id);
+
+  psa_cleanup:
+    if (key_imported)
+      psa_destroy_key(key_id);
   psa_reset_key_attributes(&attr);
 #else
   trsa = mbedtls_pk_rsa(pkctx);

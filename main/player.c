@@ -83,6 +83,9 @@ static SemaphoreHandle_t vol_mutex;
 #define BUFFER_FRAMES  256
 #define MAX_PACKET      2048
 
+// Keep the ALAC decrypt scratch buffer off the RTP task stack.
+static uint8_t alac_packet[MAX_PACKET];
+
 typedef struct audio_buffer_entry {   // decoded audio packets
     int ready;
     signed short *data;
@@ -113,19 +116,22 @@ static inline int seq_order(seq_t a, seq_t b) {
 }
 
 static void alac_decode(short *dest, uint8_t *buf, int len) {
-    unsigned char packet[MAX_PACKET];
-    assert(len<=MAX_PACKET);
+    if (len > MAX_PACKET) {
+        ESP_LOGE(TAG, "ALAC packet too large: %d > %d", len, MAX_PACKET);
+        memset(dest, 0, FRAME_BYTES(frame_size));
+        return;
+    }
 
     unsigned char iv[16];
     int aeslen = len & ~0xf;
     memcpy(iv, aesiv, sizeof(iv));
     if (aeslen > 0)
-        mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, aeslen, iv, buf, packet);
-    memcpy(packet+aeslen, buf+aeslen, len-aeslen);
+        mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, aeslen, iv, buf, alac_packet);
+    memcpy(alac_packet + aeslen, buf + aeslen, len - aeslen);
 
     int outsize;
 
-    alac_decode_frame(decoder_info, packet, dest, &outsize);
+    alac_decode_frame(decoder_info, alac_packet, dest, &outsize);
 
     assert(outsize == FRAME_BYTES(frame_size));
 }

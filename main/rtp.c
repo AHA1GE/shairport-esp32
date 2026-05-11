@@ -44,28 +44,31 @@ static const char* TAG = "RTP";
 static SOCKADDR rtp_client;
 static int sock;
 
+// Keep the receive packet buffer off the RTP task stack.
+static uint8_t rtp_packet[2048];
+
 static TaskHandle_t rtp_thread;
 extern TaskHandle_t* listen_thread;
 
 static void rtp_receiver(void* arg) {
     ESP_LOGD(TAG, "Starting RTP thread");
     // we inherit the signal mask (SIGUSR1)
-    uint8_t packet[2048], *pktp;
+    uint8_t *pktp;
 
     ssize_t nread;
     while (1) {
         if (ulTaskNotifyTake(pdTRUE, 0))
             break;
-        nread = recv(sock, packet, sizeof(packet), 0);
+        nread = recv(sock, rtp_packet, sizeof(rtp_packet), 0);
         if (nread < 0)
             break;
 
         ssize_t plen = nread;
-        uint8_t type = packet[1] & ~0x80;
+        uint8_t type = rtp_packet[1] & ~0x80;
         if (type == 0x54) // sync
             continue;
         if (type == 0x60 || type == 0x56) {   // audio data / resend
-            pktp = packet;
+            pktp = rtp_packet;
             if (type==0x56) {
                 pktp += 4;
                 plen -= 4;
@@ -164,7 +167,7 @@ int rtp_setup(SOCKADDR *remote, int cport, int tport) {
 
     ESP_LOGD(TAG, "rtp listening on port %d\n", sport);
 
-    BaseType_t ret = xTaskCreate(rtp_receiver, "RTP Receiver", 4096, NULL, 3, &rtp_thread);
+    BaseType_t ret = xTaskCreate(rtp_receiver, "RTP Receiver", 8192, NULL, 3, &rtp_thread);
     assert(ret == pdPASS);
 
     return sport;
