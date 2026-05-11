@@ -25,7 +25,10 @@
  */
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
+#include <errno.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <memory.h>
 #include <sys/types.h>
@@ -42,13 +45,19 @@ static const char* TAG = "RTP";
 
 
 static SOCKADDR rtp_client;
-static int sock;
+static int sock = -1;
 
 // Keep the receive packet buffer off the RTP task stack.
 static uint8_t rtp_packet[2048];
 
 static TaskHandle_t rtp_thread;
-extern TaskHandle_t* listen_thread;
+static TaskHandle_t rtp_owner_thread;
+static SemaphoreHandle_t rtp_stop_sem;
+
+static void ensure_rtp_stop_sem(void) {
+    if (rtp_stop_sem == NULL)
+        rtp_stop_sem = xSemaphoreCreateBinary();
+}
 
 static void rtp_receiver(void* arg) {
     ESP_LOGD(TAG, "Starting RTP thread");
@@ -60,8 +69,13 @@ static void rtp_receiver(void* arg) {
         if (ulTaskNotifyTake(pdTRUE, 0))
             break;
         nread = recv(sock, rtp_packet, sizeof(rtp_packet), 0);
-        if (nread < 0)
+        if (nread < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                continue;
+            if (errno != ENOTCONN && errno != ECONNRESET && errno != ECONNABORTED && errno != EBADF)
+                ESP_LOGD(TAG, "recv failure: %s", strerror(errno));
             break;
+        }
 
         ssize_t plen = nread;
         uint8_t type = rtp_packet[1] & ~0x80;
@@ -94,9 +108,13 @@ static void rtp_receiver(void* arg) {
     }
 
     ESP_LOGD(TAG, "RTP thread interrupted. terminating.\n");
-    close(sock);
+    if (sock >= 0) {
+        close(sock);
+        sock = -1;
+    }
     rtp_thread = NULL;
-    xTaskNotifyGive(*listen_thread);
+    if (rtp_stop_sem != NULL)
+        xSemaphoreGive(rtp_stop_sem);
     vTaskDelete(NULL);
 }
 
@@ -115,6 +133,13 @@ static int bind_port(SOCKADDR *remote) {
 
     sock = socket(remote->SAFAMILY, SOCK_DGRAM, IPPROTO_UDP);
     ret = bind(sock, info->ai_addr, info->ai_addrlen);
+
+    struct timeval recv_timeout = {
+        .tv_sec = 1,
+        .tv_usec = 0,
+    };
+    if (sock >= 0)
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
 
     freeaddrinfo(info);
 
@@ -141,10 +166,22 @@ static int bind_port(SOCKADDR *remote) {
 
 
 int rtp_setup(SOCKADDR *remote, int cport, int tport) {
+    TaskHandle_t current_thread = xTaskGetCurrentTaskHandle();
+
+    ensure_rtp_stop_sem();
+
     if (rtp_thread != NULL) {
+        rtp_owner_thread = current_thread;
+        xSemaphoreTake(rtp_stop_sem, 0);
         xTaskNotifyGive(rtp_thread);
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        assert(rtp_thread == NULL);
+        if (xSemaphoreTake(rtp_stop_sem, pdMS_TO_TICKS(2000)) != pdTRUE) {
+            ESP_LOGW(TAG, "timed out waiting for RTP thread shutdown");
+            return 0;
+        }
+        if (rtp_thread != NULL) {
+            ESP_LOGW(TAG, "RTP thread still running during setup handoff");
+            return 0;
+        }
     }
     ESP_LOGD(TAG, "rtp_setup: cport=%d tport=%d\n", cport, tport);
 
@@ -167,6 +204,7 @@ int rtp_setup(SOCKADDR *remote, int cport, int tport) {
 
     ESP_LOGD(TAG, "rtp listening on port %d\n", sport);
 
+    rtp_owner_thread = current_thread;
     BaseType_t ret = xTaskCreate(rtp_receiver, "RTP Receiver", 8192, NULL, 3, &rtp_thread);
     assert(ret == pdPASS);
 
@@ -176,10 +214,14 @@ int rtp_setup(SOCKADDR *remote, int cport, int tport) {
 void rtp_shutdown(void) {
     //if (!running)
     //    ESP_LOGE(TAG, "rtp_shutdown called without active stream!");
-    if (rtp_thread != NULL && *listen_thread == xTaskGetCurrentTaskHandle()) {
+    if (rtp_thread != NULL && rtp_owner_thread == xTaskGetCurrentTaskHandle()) {
         ESP_LOGD(TAG, "shutting down RTP thread\n");
+        ensure_rtp_stop_sem();
+        xSemaphoreTake(rtp_stop_sem, 0);
         xTaskNotifyGive(rtp_thread);
-        xTaskNotifyWait(0x01, 0x01, NULL, portMAX_DELAY);
+        if (xSemaphoreTake(rtp_stop_sem, pdMS_TO_TICKS(2000)) != pdTRUE)
+            ESP_LOGW(TAG, "timed out waiting for RTP thread shutdown");
+        rtp_owner_thread = NULL;
     }
 }
 

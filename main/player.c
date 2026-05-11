@@ -63,7 +63,8 @@ static int sampling_rate, frame_size;
 #define OUTFRAME_BYTES(frame_size) (4*(frame_size+3))
 
 static TaskHandle_t player_thread;
-extern TaskHandle_t* listen_thread;
+static TaskHandle_t player_owner_thread;
+static SemaphoreHandle_t player_stop_sem;
 
 static alac_file *decoder_info;
 
@@ -175,7 +176,10 @@ static int init_decoder(int32_t fmtp[12]) {
 }
 
 static void free_decoder(void) {
-    alac_free(decoder_info);
+    if (decoder_info) {
+        alac_free(decoder_info);
+        decoder_info = NULL;
+    }
 }
 
 #ifdef FANCY_RESAMPLING
@@ -203,8 +207,35 @@ static void init_buffer(void) {
 
 static void free_buffer(void) {
     int i;
-    for (i=0; i<BUFFER_FRAMES; i++)
+    for (i=0; i<BUFFER_FRAMES; i++) {
         free(audio_buffer[i].data);
+        audio_buffer[i].data = NULL;
+    }
+}
+
+static void cleanup_player_session(void) {
+    config.output->stop();
+#ifdef FANCY_RESAMPLING
+    free_src();
+#endif
+    free_buffer();
+    free_decoder();
+    if (ab_mutex) {
+        vSemaphoreDelete(ab_mutex);
+        ab_mutex = NULL;
+    }
+    if (vol_mutex) {
+        vSemaphoreDelete(vol_mutex);
+        vol_mutex = NULL;
+    }
+    mbedtls_aes_free(&aes);
+    aesiv = NULL;
+    player_owner_thread = NULL;
+}
+
+static void ensure_player_stop_sem(void) {
+    if (player_stop_sem == NULL)
+        player_stop_sem = xSemaphoreCreateBinary();
 }
 
 void player_put_packet(seq_t seqno, uint8_t *data, int len) {
@@ -514,7 +545,8 @@ static void player_thread_func(void *arg) {
         config.output->play(outbuf, play_samples);
     }
     player_thread = NULL;
-    xTaskNotifyGive(*listen_thread);
+    if (player_stop_sem != NULL)
+        xSemaphoreGive(player_stop_sem);
     vTaskDelete(NULL);
 }
 
@@ -525,7 +557,7 @@ void player_volume(double f) {
     if (config.output->volume) {
         config.output->volume(linear_volume);
     } else {
-        if(xSemaphoreTake(vol_mutex, (TickType_t) 10)) {
+        if (vol_mutex && xSemaphoreTake(vol_mutex, (TickType_t) 10)) {
             volume = linear_volume;
             fix_volume = 65536.0 * volume;
             xSemaphoreGive(vol_mutex);
@@ -533,22 +565,30 @@ void player_volume(double f) {
     }
 }
 void player_flush(void) {
-    if(xSemaphoreTake(ab_mutex, (TickType_t) 10)) { // RTSP thread
+    if (ab_mutex && xSemaphoreTake(ab_mutex, (TickType_t) 10)) { // RTSP thread
         ab_resync();
         xSemaphoreGive(ab_mutex); // RTSP thread
     }
 }
 
 int player_play(stream_cfg *stream) {
+    TaskHandle_t current_thread = xTaskGetCurrentTaskHandle();
+
+    ensure_player_stop_sem();
+
     if (player_thread != NULL) {
+        player_owner_thread = current_thread;
+        xSemaphoreTake(player_stop_sem, 0);
         xTaskNotifyGive(player_thread);
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        xSemaphoreTake(player_stop_sem, portMAX_DELAY);
         assert(player_thread == NULL);
+        cleanup_player_session();
     }
     if (config.buffer_start_fill > BUFFER_FRAMES)
         ESP_LOGE(TAG, "specified buffer starting fill %d > buffer size %d",
             config.buffer_start_fill, BUFFER_FRAMES);
 
+    player_owner_thread = current_thread;
     mbedtls_aes_init(&aes);
     mbedtls_aes_setkey_dec(&aes, stream->aeskey, 128);
     aesiv = stream->aesiv;
@@ -566,11 +606,11 @@ int player_play(stream_cfg *stream) {
 }
 
 void player_stop(void) {
-    if (player_thread != NULL && *listen_thread == xTaskGetCurrentTaskHandle()) {
+    if (player_thread != NULL && player_owner_thread == xTaskGetCurrentTaskHandle()) {
+        ensure_player_stop_sem();
+        xSemaphoreTake(player_stop_sem, 0);
         xTaskNotifyGive(player_thread);
-        xTaskNotifyWait(0x01, 0x01, NULL, portMAX_DELAY);
-        config.output->stop();
-        free_buffer();
-        free_decoder();
+        xSemaphoreTake(player_stop_sem, portMAX_DELAY);
+        cleanup_player_session();
     }
 }

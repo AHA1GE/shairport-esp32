@@ -41,6 +41,7 @@ char *base64_enc(uint8_t *input, int length);
 
 #define RSA_MODE_AUTH (0)
 #define RSA_MODE_KEY  (1)
+
 uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode);
 
 extern shairport_cfg config;

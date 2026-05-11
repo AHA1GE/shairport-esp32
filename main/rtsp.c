@@ -55,14 +55,11 @@ static const char* TAG = "RTSP";
 #define INETx_ADDRSTRLEN INET_ADDRSTRLEN
 #endif
 
-static int please_shutdown = 0;
-static TaskHandle_t listen_thread_handle = NULL;
-TaskHandle_t* listen_thread = &listen_thread_handle;
-
 typedef struct {
     int fd;
     stream_cfg stream;
     SOCKADDR remote;
+    int please_shutdown;
     int running;
     TaskHandle_t thread;
 } rtsp_conn_info;
@@ -90,6 +87,24 @@ static void cleanup_threads(void) {
         } else {
             i++;
         }
+    }
+}
+
+static void shutdown_other_connections(void) {
+    int i;
+
+    for (i=0; i<nconns; i++) {
+        rtsp_conn_info *conn = conns[i];
+
+        if (conn->thread == NULL || conn->fd < 0)
+            continue;
+
+        // Some clients leave the control socket open after deselecting AirPlay.
+        // Wake any older session so it can release RTP/player ownership cleanly.
+        ESP_LOGD(TAG, "closing previous RTSP connection\n");
+        conn->please_shutdown = 1;
+        xTaskNotifyGive(conn->thread);
+        shutdown(conn->fd, SHUT_RDWR);
     }
 }
 
@@ -247,7 +262,8 @@ static rtsp_message * rtsp_read_request(int fd) {
         if (nread < 0) {
             if (errno==EINTR)
                 continue;
-            perror("read failure");
+            if (errno != ENOTCONN && errno != ECONNRESET && errno != ECONNABORTED && errno != EPIPE && errno != EBADF)
+                ESP_LOGD(TAG, "read failure: %s", strerror(errno));
             goto shutdown;
         }
         inbuf += nread;
@@ -280,10 +296,11 @@ static rtsp_message * rtsp_read_request(int fd) {
         nread = read(fd, buf+inbuf, msg_size-inbuf);
         if (!nread)
             goto shutdown;
-        if (nread==EINTR)
+        if (nread < 0 && errno == EINTR)
             continue;
         if (nread < 0) {
-            perror("read failure");
+            if (errno != ENOTCONN && errno != ECONNRESET && errno != ECONNABORTED && errno != EPIPE && errno != EBADF)
+                ESP_LOGD(TAG, "read failure: %s", strerror(errno));
             goto shutdown;
         }
         inbuf += nread;
@@ -343,7 +360,7 @@ static void handle_teardown(rtsp_conn_info *conn,
                             rtsp_message *req, rtsp_message *resp) {
     resp->respcode = 200;
     msg_add_header(resp, "Connection", "close");
-    please_shutdown = 1;
+    conn->please_shutdown = 1;
 }
 
 static void handle_flush(rtsp_conn_info *conn,
@@ -574,12 +591,6 @@ static void apple_challenge(int fd, rtsp_message *req, rtsp_message *resp) {
     free(encoded);
 }
 
-static char *make_nonce(void) {
-    uint8_t random[8];
-    esp_fill_random(random, 8);
-    return base64_enc(random, 8);
-}
-
 static int rtsp_auth(char **nonce, rtsp_message *req, rtsp_message *resp) {
 
     return 0;
@@ -675,6 +686,8 @@ static void rtsp_conversation_thread_func(void *pconn) {
         resp = msg_init();
         resp->respcode = 400;
 
+        ESP_LOGV(TAG, "RTSP method %s", req->method);
+
         apple_challenge(conn->fd, req, resp);
         hdr = msg_get_header(req, "CSeq");
         if (hdr)
@@ -697,6 +710,11 @@ respond:
         msg_write_response(conn->fd, resp);
         msg_free(req);
         msg_free(resp);
+
+        if (conn->please_shutdown) {
+            ESP_LOGD(TAG, "RTSP teardown requested\n");
+            break;
+        }
     }
 
     ESP_LOGD(TAG, "closing RTSP connection\n");
@@ -797,7 +815,6 @@ void rtsp_listen_loop(void) {
     mdns_register();
 
     printf("Listening for connections.\n");
-    ESP_LOGD(TAG, "Testing");
 
     int acceptfd;
     struct timeval tv;
@@ -816,7 +833,6 @@ void rtsp_listen_loop(void) {
             break;
         }
 
-        ESP_LOGI(TAG, "Going");
         cleanup_threads();
 
         acceptfd = -1;
@@ -840,8 +856,8 @@ void rtsp_listen_loop(void) {
             perror("failed to accept connection");
             free(conn);
         } else {
+            shutdown_other_connections();
             xTaskCreate(rtsp_conversation_thread_func, "RTSP Conversation", 8192, (void*)conn, 2, &(conn->thread));
-            listen_thread = &(conn->thread);
             conn->running = 1;
             track_thread(conn);
         }
