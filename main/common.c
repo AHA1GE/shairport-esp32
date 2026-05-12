@@ -63,9 +63,10 @@ uint8_t *base64_dec(char *input, int *outlen) {
     strcpy(inbuf, input);
 
     // Apple cut the padding off their challenges; restore it
-    char pad = '=';
-    while (inlen++ & 3)
-        strncat(inbuf, &pad, 1);
+  size_t padding = (4 - (inlen & 3)) & 3;
+  memset(inbuf + inlen, '=', padding);
+  inbuf[inlen + padding] = '\0';
+  inlen += (int)padding;
 
     int bufsize = (inlen-1)*3/4;
     uint8_t *buf = malloc(bufsize);
